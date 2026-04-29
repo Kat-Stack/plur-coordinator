@@ -47,10 +47,23 @@ module.exports = {
 
         collector.on('collect', async i => {
             try {
-                if (!validVoterIds.includes(i.user.id)) return await i.reply({ content: '🚫 Viewers cannot trigger network-wide broadcasts.', ephemeral: true });
-                if (votes.has(i.user.id)) return await i.reply({ content: 'Vote already locked.', ephemeral: true });
+                // 1. REAL-TIME DB CHECK: Verify they are an active citizen right now
+                const isCitizen = await db.get(`SELECT * FROM plur_members WHERE plur_channel_id = ? AND user_id = ?`, [channelId, i.user.id]);
+                
+                if (!isCitizen) {
+                    return await i.reply({ 
+                        content: '🚫 Viewers cannot trigger network-wide broadcasts. Run `/opt_in` in this channel first!', 
+                        ephemeral: true 
+                    });
+                }
+
+                // 2. Double-vote check
+                if (votes.has(i.user.id)) {
+                    return await i.reply({ content: 'Vote already locked.', ephemeral: true });
+                }
                 
                 votes.add(i.user.id);
+                // ... the rest of your code remains exactly the same
                 
                 try {
                     await i.deferUpdate();
