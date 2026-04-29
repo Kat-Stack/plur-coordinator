@@ -139,7 +139,7 @@ client.on('interactionCreate', async interaction => {
                     const targetChannel = await client.channels.fetch(targetChannelId).catch(() => null);
                     if (targetChannel) {
                         await targetChannel.send({ 
-                            content: `**[Collective Response from ${interaction.guild.name} / #${interaction.channel.name}]:** ${responseText}`,
+                            content: `**[#${interaction.channel.name} ${interaction.guild.name}]:** ${responseText}`,
                             reply: { messageReference: messageId }
                         });
                     }

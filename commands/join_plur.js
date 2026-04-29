@@ -31,8 +31,8 @@ module.exports = {
         const validVoterIds = registeredVoters.map(v => v.user_id);
 
         const embed = new EmbedBuilder()
-            .setTitle('🔗 Bridge Proposal: Listen')
-            .setDescription(`**Proposed by:** <@${interaction.user.id}>\n**Action:** Establish a one-way listening bridge to node \`${targetChannel.name}\` (ID: ${targetId}).`)
+            .setTitle('🔗 ')
+            .setDescription(`**Proposed by:** <@${interaction.user.id}>\n**Action:** Join \`${targetChannel.name}\` (ID: ${targetId}).`)
             .setColor('#f39c12')
             .setFooter({ text: `Requires ${REQUIRED_VOTES} votes for consensus.` });
 
@@ -65,7 +65,7 @@ module.exports = {
                     
                     const passedEmbed = EmbedBuilder.from(embed).setColor('#2ecc71').setTitle('🔗 Bridge [ESTABLISHED]');
                     await interaction.editReply({ embeds: [passedEmbed], components: [] });
-                    await interaction.channel.send(`✅ We are now actively intercepting transmissions from **${targetChannel.name}**.`);
+                    await interaction.channel.send(`✅ We are now a part of the **${targetChannel.name}**/n's.`);
                 } else {
                     approveButton.setLabel(`Approve (${votes.size}/${REQUIRED_VOTES})`);
                     await interaction.editReply({ components: [new ActionRowBuilder().addComponents(approveButton)] });

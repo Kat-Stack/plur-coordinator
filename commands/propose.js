@@ -62,7 +62,7 @@ module.exports = {
                     collector.stop('passed');
                     
                     await interaction.editReply({ 
-                        embeds: [EmbedBuilder.from(embed).setColor('#f39c12').setTitle(`🌐 BROADCASTING TO ${allGlobals.length} SERVERS...`)], 
+                        embeds: [EmbedBuilder.from(embed).setColor('#f39c12').setTitle(`🌐  ${allGlobals.length}...`)], 
                         components: [] 
                     });
                     
@@ -73,7 +73,7 @@ module.exports = {
                             
                             if (targetChannel) {
                                 const globalEmbed = new EmbedBuilder()
-                                    .setTitle(`📡 Incoming Transmission from the Network`)
+                                    .setTitle(`📡`)
                                     .setAuthor({ 
                                         name: `Origin: ${interaction.guild.name} (#${interaction.channel.name})`, 
                                         iconURL: interaction.guild.iconURL() 
@@ -82,8 +82,8 @@ module.exports = {
                                     .setColor('#2ecc71')
                                     // 🔗 THE BRIDGE: Display the origin ID clearly so other nodes can copy it
                                     .addFields({ 
-                                        name: '🔗 Establish Intercept Bridge', 
-                                        value: `To subscribe to this node, run:\n\`/join_plur target_id: ${channelId}\`` 
+                                        name: '🔗', 
+                                        value: `To join to this plur, run:\n\`/join_plur target_id: ${channelId}\`` 
                                     })
                                     .setTimestamp();
 
