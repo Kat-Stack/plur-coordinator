@@ -1,125 +1,153 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, ChannelType } = require('discord.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('propose')
-        .setDescription('Broadcast a message to the ENTIRE plur network.')
+        .setDescription('Open a node consensus thread for a new proposal.')
         .addStringOption(option => 
-            option.setName('message')
-                .setDescription('The payload you want to broadcast')
+            option.setName('type')
+                .setDescription('What kind of action is this?')
+                .setRequired(true)
+                .addChoices(
+                    { name: 'Global Broadcast', value: 'global_broadcast' },
+                    { name: 'Send to a plur we are in (use in a thread)', value: 'collective_speech' },
+                    { name: 'Join Plur', value: 'join_plur' },
+                    { name: 'Toggle Walls and Privacy (Open/Close)', value: 'toggle_borders' },
+                    { name: 'Local Action (Pin)', value: 'local_action' },
+                    { name: 'Admit Citizen (Sponsor)', value: 'admit_citizen' }
+                )
+        )
+        .addStringOption(option => 
+            option.setName('details')
+                .setDescription('The message, target ID (Internal or Raw), @user, or directive.')
                 .setRequired(true)
         ),
 
     async execute(interaction, db) {
-        const proposalText = interaction.options.getString('message');
-        const channelId = interaction.channelId;
-
-        const allGlobals = await db.all(`SELECT channel_id FROM globals`);
+        const proposalType = interaction.options.getString('type');
+        let payloadText = (interaction.options.getString('details') || interaction.options.getString('payload')).trim(); 
         
-        if (allGlobals.length === 0) return interaction.reply({ content: '❌ No Global Feeds have been set up in the network yet.', ephemeral: true });
-
-        const registeredVoters = await db.all(`SELECT user_id FROM plur_members WHERE plur_channel_id = ?`, [channelId]);
+        const bouncerChannelId = interaction.channel.isThread() ? interaction.channel.parentId : interaction.channelId;
+        const isCitizen = await db.get(`SELECT * FROM plur_members WHERE plur_channel_id = ? AND user_id = ?`, [bouncerChannelId, interaction.user.id]);
         
-        if (registeredVoters.length === 0) return interaction.reply({ content: '⚠️ No registered voters here. Run `/opt_in` first.', ephemeral: true });
+        if (!isCitizen) return interaction.reply({ content: '⚠️ You must be an active citizen to initiate a proposal.', flags: MessageFlags.Ephemeral });
 
-        const totalVoters = registeredVoters.length;
-        const REQUIRED_VOTES = Math.floor(totalVoters / 2) + 1;
-        const validVoterIds = registeredVoters.map(voter => voter.user_id);
+        const registeredVoters = await db.all(`SELECT user_id FROM plur_members WHERE plur_channel_id = ? AND member_type = 'human'`, [bouncerChannelId]);
+        if (registeredVoters.length === 0) return interaction.reply({ content: '⚠️ Node has no human citizens.', flags: MessageFlags.Ephemeral });
+
+        const allVoters = await db.all(`SELECT user_id FROM plur_members WHERE plur_channel_id = ?`, [bouncerChannelId]);
+        const REQUIRED_VOTES = Math.floor(allVoters.length / 2) + 1;
+        const proposalId = `prop_${Date.now()}`;
+
+        // --- THE ID RESOLVER FOR JOIN_PLUR ---
+        if (proposalType === 'join_plur') {
+            if (/^\d{1,6}$/.test(payloadText)) {
+                const registryEntry = await db.get(`SELECT channel_id FROM node_registry WHERE short_id = ?`, [payloadText]);
+                if (registryEntry) {
+                    payloadText = registryEntry.channel_id; // Mutate the payload to the raw ID for the database
+                } else {
+                    return interaction.reply({ content: `❌ Cannot find a node with Internal ID \`${payloadText}\`.`, flags: MessageFlags.Ephemeral });
+                }
+            }
+        }
+
+        await interaction.reply({ content: `✅ Proposal logged. Generating consensus thread...`, flags: MessageFlags.Ephemeral });
+
+        let targetChannel = interaction.channel;
+        let threadPrefix = '🛠️ Local Action';
+        let dynamicLabel = 'Details';
+
+        if (proposalType === 'global_broadcast') { threadPrefix = '📡 Global Transmit'; dynamicLabel = 'Broadcast Message'; }
+        if (proposalType === 'join_plur') { threadPrefix = '🔗 Join Plur'; dynamicLabel = 'Target Network'; }
+        if (proposalType === 'toggle_borders') { threadPrefix = '🛡️ Border Policy'; dynamicLabel = 'Status (Ignored)'; }
+        if (proposalType === 'admit_citizen') { threadPrefix = '🛂 Applications'; dynamicLabel = 'Applicant'; }
+        if (proposalType === 'collective_speech') { threadPrefix = '🗣️ Collective Speech'; dynamicLabel = 'Message to Network'; }
+        if (proposalType === 'local_action') { dynamicLabel = 'Directive'; }
+
+        if (!interaction.channel.isThread()) {
+            targetChannel = await interaction.channel.threads.create({
+                name: `Vote: ${threadPrefix}`,
+                type: ChannelType.PublicThread,
+                autoArchiveDuration: 1440,
+                reason: 'Dedicated node voting and deliberation thread.'
+            });
+        }
+
+        let displayPayload = payloadText;
+        if (proposalType === 'join_plur') {
+            const cleanId = payloadText.replace(/\D/g, '');
+            if (cleanId) {
+                const fetchedChannel = await interaction.client.channels.fetch(cleanId).catch(() => null);
+                if (fetchedChannel) {
+                    displayPayload = `**${fetchedChannel.name}**\n*(ID: \`${cleanId}\`)*`;
+                } else {
+                    displayPayload = `⚠️ **Unknown Network**\n*(ID: \`${cleanId}\`)*\n*Warning: I cannot see this channel natively.*`;
+                }
+            }
+        } else if (proposalType === 'admit_citizen') {
+            const cleanId = payloadText.replace(/\D/g, '');
+            if (cleanId) displayPayload = `<@${cleanId}>\n*(ID: \`${cleanId}\`)*`;
+        }
 
         const embed = new EmbedBuilder()
-            .setTitle('🌐 Network-Wide Proposal')
-            .setDescription(`**Proposed by:** <@${interaction.user.id}>\n\n**Payload:**\n${proposalText}`)
+            .setTitle(`🏛️ Node Consensus Required`)
+            .setDescription(`**Author:** <@${interaction.user.id}>\n**Action:** \`${proposalType}\`\n\n**${dynamicLabel}:**\n${displayPayload}`)
             .setColor('#3498db')
-            .setFooter({ text: `Requires ${REQUIRED_VOTES} votes to broadcast to ${allGlobals.length} servers.` }); 
+            .setFooter({ text: `Requires ${REQUIRED_VOTES} citizen votes to execute or reject.` }); 
 
-        const approveButton = new ButtonBuilder()
-            .setCustomId('approve_proposal')
-            .setLabel(`Approve (0/${REQUIRED_VOTES})`)
-            .setStyle(ButtonStyle.Success);
+        const approveButton = new ButtonBuilder().setCustomId(`vote_yes_${proposalId}`).setLabel(`Approve (0/${REQUIRED_VOTES})`).setStyle(ButtonStyle.Success);
+        const rejectButton = new ButtonBuilder().setCustomId(`vote_no_${proposalId}`).setLabel(`Reject (0/${REQUIRED_VOTES})`).setStyle(ButtonStyle.Danger);
 
-        await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(approveButton)]});
-        const responseMessage = await interaction.fetchReply();
-
-        const filter = i => i.customId === 'approve_proposal';
-        const collector = responseMessage.createMessageComponentCollector({ filter, time: 600000 }); 
-
-        let votes = new Set();
-
-        collector.on('collect', async i => {
-            try {
-                // 1. REAL-TIME DB CHECK: Verify they are an active citizen right now
-                const isCitizen = await db.get(`SELECT * FROM plur_members WHERE plur_channel_id = ? AND user_id = ?`, [channelId, i.user.id]);
-                
-                if (!isCitizen) {
-                    return await i.reply({ 
-                        content: '🚫 Viewers cannot trigger network-wide broadcasts. Run `/opt_in` in this channel first!', 
-                        ephemeral: true 
-                    });
-                }
-
-                // 2. Double-vote check
-                if (votes.has(i.user.id)) {
-                    return await i.reply({ content: 'Vote already locked.', ephemeral: true });
-                }
-                
-                votes.add(i.user.id);
-                // ... the rest of your code remains exactly the same
-                
-                try {
-                    await i.deferUpdate();
-                } catch (ackErr) {
-                    console.warn("⚠️ Discord API hiccup ignored.");
-                }
-
-                if (votes.size >= REQUIRED_VOTES) {
-                    collector.stop('passed');
-                    
-                    await interaction.editReply({ 
-                        embeds: [EmbedBuilder.from(embed).setColor('#f39c12').setTitle(`🌐  ${allGlobals.length}...`)], 
-                        components: [] 
-                    });
-                    
-                    let successCount = 0;
-                    for (const entry of allGlobals) {
-                        try {
-                            const targetChannel = await interaction.client.channels.fetch(entry.channel_id).catch(() => null);
-                            
-                            if (targetChannel) {
-                                const globalEmbed = new EmbedBuilder()
-                                    .setTitle(`📡`)
-                                    .setAuthor({ 
-                                        name: `Origin: ${interaction.guild.name} (#${interaction.channel.name})`, 
-                                        iconURL: interaction.guild.iconURL() 
-                                    })
-                                    .setDescription(proposalText)
-                                    .setColor('#2ecc71')
-                                    // 🔗 THE BRIDGE: Display the origin ID clearly so other nodes can copy it
-                                    .addFields({ 
-                                        name: '🔗', 
-                                        value: `To join to this plur, run:\n\`/join_plur target_id: ${channelId}\`` 
-                                    })
-                                    .setTimestamp();
-
-                                await targetChannel.send({ embeds: [globalEmbed] });
-                                successCount++;
-                            }
-                        } catch (err) {
-                            console.error(`Could not send to channel ${entry.channel_id}:`, err);
-                        }
-                    }
-
-                    await interaction.editReply({ 
-                        embeds: [EmbedBuilder.from(embed).setColor('#2ecc71').setTitle(`🌐 BROADCAST COMPLETE (${successCount} Servers)`)], 
-                        components: [] 
-                    });
-                    
-                } else {
-                    approveButton.setLabel(`Approve (${votes.size}/${REQUIRED_VOTES})`);
-                    await interaction.editReply({ components: [new ActionRowBuilder().addComponents(approveButton)] });
-                }
-            } catch (fatalErr) {
-                console.error("Critical collector failure:", fatalErr);
-            }
+        const voteMsg = await targetChannel.send({ 
+            content: `<@${interaction.user.id}> has initiated a vote. Discuss and lock in below.`, 
+            embeds: [embed], components: [new ActionRowBuilder().addComponents(approveButton, rejectButton)] 
         });
+
+        // The database backend saves the resolved payload (Raw ID) so it can execute properly
+        await db.run(`INSERT INTO active_proposals (proposal_id, channel_id, thread_id, message_id, author_id, proposal_type, payload, required_votes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
+            [proposalId, bouncerChannelId, targetChannel.id, voteMsg.id, interaction.user.id, proposalType, payloadText, REQUIRED_VOTES]);
+
+        const collectiveCitizens = await db.all(`SELECT user_id FROM plur_members WHERE plur_channel_id = ? AND member_type = 'plur'`, [bouncerChannelId]);
+        
+        for (const collective of collectiveCitizens) {
+            try {
+                const shadowChannelId = collective.user_id;
+                const shadowChannel = await interaction.client.channels.fetch(shadowChannelId).catch(() => null);
+                
+                if (shadowChannel) {
+                    const shadowVoters = await db.all(`SELECT user_id FROM plur_members WHERE plur_channel_id = ?`, [shadowChannelId]);
+                    if (shadowVoters.length === 0) continue; 
+                    
+                    const SHADOW_REQ = Math.floor(shadowVoters.length / 2) + 1;
+                    const shadowPropId = `prop_shadow_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+                    const shadowThread = await shadowChannel.threads.create({
+                        name: `🏛️ Proxy Vote: ${proposalType}`,
+                        type: ChannelType.PublicThread,
+                        autoArchiveDuration: 1440,
+                        reason: 'Holonic Proxy deliberation for reply node.'
+                    });
+
+                    const shadowEmbed = new EmbedBuilder()
+                        .setTitle(`🏛️ Holonic Proxy Vote Required`)
+                        .setDescription(`**Target Node:** <#${bouncerChannelId}>\n**Action:** \`${proposalType}\`\n\n**${dynamicLabel}:**\n${displayPayload}\n\n*Our collective is registered as a citizen of the target node. We must vote to cast our proxy vote.*`)
+                        .setColor('#9b59b6')
+                        .setFooter({ text: `Requires ${SHADOW_REQ} local votes to lock in our collective decision.` }); 
+
+                    const shadowApprove = new ButtonBuilder().setCustomId(`vote_yes_${shadowPropId}`).setLabel(`Vote YES (0/${SHADOW_REQ})`).setStyle(ButtonStyle.Success);
+                    const shadowReject = new ButtonBuilder().setCustomId(`vote_no_${shadowPropId}`).setLabel(`Vote NO (0/${SHADOW_REQ})`).setStyle(ButtonStyle.Danger);
+
+                    const shadowVoteMsg = await shadowThread.send({ 
+                        content: `**ATTENTION CITIZENS:** A reply node requires our proxy vote.`,
+                        embeds: [shadowEmbed], components: [new ActionRowBuilder().addComponents(shadowApprove, shadowReject)] 
+                    });
+
+                    await db.run(`INSERT INTO active_proposals (proposal_id, channel_id, thread_id, message_id, author_id, proposal_type, payload, required_votes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
+                        [shadowPropId, shadowChannelId, shadowThread.id, shadowVoteMsg.id, 'HOLONIC_SYSTEM', 'holonic_proxy', proposalId, SHADOW_REQ]);
+
+                    await db.run(`INSERT OR IGNORE INTO thread_links (parent_thread_id, shadow_thread_id) VALUES (?, ?)`, [targetChannel.id, shadowThread.id]);
+                }
+            } catch (err) { console.error("Failed to generate shadow thread:", err); }
+        }
     }
 };

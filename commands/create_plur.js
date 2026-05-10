@@ -20,8 +20,12 @@ module.exports = {
                 type: ChannelType.GuildText,
             });
 
+            // Register the new internal cell
+            await db.run(`INSERT INTO node_registry (channel_id, plur_name) VALUES (?, ?)`, [channel.id, plurName]);
+            const node = await db.get(`SELECT short_id FROM node_registry WHERE channel_id = ?`, [channel.id]);
+
             await interaction.reply({ 
-                content: `✅ Plur established! The new internal space is ready: <#${channel.id}>` 
+                content: `✅ Plur established! The new internal space is ready: <#${channel.id}>\n**Internal ID:** \`${node.short_id}\` *(Use this ID to bridge to it)*` 
             });
             
         } catch (error) {

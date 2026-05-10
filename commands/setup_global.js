@@ -17,14 +17,23 @@ module.exports = {
                 ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
             `, [guildId, channelId, channelId]);
 
+            // Register the node and fetch its new short_id
+            await db.run(`
+                INSERT INTO node_registry (channel_id, plur_name) 
+                VALUES (?, ?) 
+                ON CONFLICT(channel_id) DO UPDATE SET plur_name = ?
+            `, [channelId, interaction.channel.name, interaction.channel.name]);
+            
+            const node = await db.get(`SELECT short_id FROM node_registry WHERE channel_id = ?`, [channelId]);
+
             // Ephemeral confirmation
             await interaction.reply({ 
-                content: `✅ Success! This channel (<#${channelId}>) is now the designated Global Feed.`, 
+                content: `✅ Success! This channel (<#${channelId}>) is now the designated Global Feed.\n**Internal Node ID:** \`${node.short_id}\``, 
                 ephemeral: true 
             });
             
             const welcomeEmbed = new EmbedBuilder()
-                .setTitle('🌐 Node Initialized: Welcome to the Mesh')
+                .setTitle(`🌐 Node Initialized: Welcome to the Mesh (Node #${node.short_id})`)
                 .setDescription('This channel is now actively connected to the broader mycelial network. To participate in cross-server consensus, you must register as a voting agent.')
                 .setColor('#3498db')
                 .addFields(
